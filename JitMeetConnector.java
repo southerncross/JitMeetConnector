@@ -2,6 +2,9 @@ package test;
 
 import java.util.Scanner;
 
+import net.java.sip.communicator.impl.protocol.jabber.extensions.ConferenceDescriptionPacketExtension;
+import net.java.sip.communicator.impl.protocol.jabber.extensions.colibri.ColibriConferenceIQ;
+import net.java.sip.communicator.impl.protocol.jabber.extensions.colibri.ColibriIQProvider;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.JingleIQ;
 
 import org.jivesoftware.smack.ConnectionConfiguration;
@@ -10,12 +13,24 @@ import org.jivesoftware.smack.XMPPConnection;
 import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.packet.Packet;
+import org.jivesoftware.smack.packet.Presence;
+import org.jivesoftware.smack.provider.ProviderManager;
 import org.jivesoftware.smackx.muc.MultiUserChat;
 
 public class JitMeetConnector
 {
     public static void main(String[] args)
     {
+        // create IQ handler
+        ProviderManager providerManager = ProviderManager.getInstance();
+        // <conference>
+        providerManager.addIQProvider(ColibriConferenceIQ.ELEMENT_NAME,
+            ColibriConferenceIQ.NAMESPACE, new ColibriIQProvider());
+        providerManager.addExtensionProvider(
+            ConferenceDescriptionPacketExtension.ELEMENT_NAME,
+            ConferenceDescriptionPacketExtension.NAMESPACE,
+            new ConferenceDescriptionPacketExtension.Provider());
+
         // create XMPP connection
         ConnectionConfiguration conf =
             new ConnectionConfiguration("jitmeet.example.com", 5222);
@@ -60,11 +75,9 @@ public class JitMeetConnector
                 @Override
                 public void processPacket(Packet packet)
                 {
-                    if (packet.getClass() == JingleIQ.class)
+                    if (packet.getClass() == Presence.class)
                     {
-                        JingleIQ j = (JingleIQ) packet;
-                        System.out.println("<-----: [jingle packet] "
-                            + j.getSID() + " : " + j.getAction() + " : "
+                        System.out.println("<-----: [presence] "
                             + packet.toXML());
                     }
                     else
@@ -85,7 +98,7 @@ public class JitMeetConnector
             // join conference
             MultiUserChat muc =
                 new MultiUserChat(connection,
-                    "krephqivqz7iudi@conference.example.com");
+                    "ysr7egtybc7bvs4i@conference.example.com");
             muc.join("JitMeetConnector");
 
             Scanner s = new Scanner(System.in);
