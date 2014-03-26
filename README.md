@@ -1,7 +1,8 @@
 JitMeetConnector
 ================
 
-This is a demo program for connecting with JitMeet:  
-1. Connect with JitMeet.  
-2. Join in an existed conference.  
-3. Send messages.  
+This repository contains two parts:  
+1. A demo program for connecting with JitMeet, or rather VideoBridge.
+2. Summarizes of learning VideoBridge.
+
+-Lishunyang(lishunyang@pku.edu.cn)
