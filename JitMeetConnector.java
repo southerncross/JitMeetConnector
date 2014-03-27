@@ -3,8 +3,10 @@ package test;
 import java.util.Scanner;
 
 import net.java.sip.communicator.impl.protocol.jabber.extensions.ConferenceDescriptionPacketExtension;
+import net.java.sip.communicator.impl.protocol.jabber.extensions.DefaultPacketExtensionProvider;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.colibri.ColibriConferenceIQ;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.colibri.ColibriIQProvider;
+import net.java.sip.communicator.impl.protocol.jabber.extensions.colibri.SourcePacketExtension;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.JingleIQ;
 
 import org.jivesoftware.smack.ConnectionConfiguration;
@@ -30,6 +32,11 @@ public class JitMeetConnector
             ConferenceDescriptionPacketExtension.ELEMENT_NAME,
             ConferenceDescriptionPacketExtension.NAMESPACE,
             new ConferenceDescriptionPacketExtension.Provider());
+        providerManager.addExtensionProvider(
+            SourcePacketExtension.ELEMENT_NAME,
+            SourcePacketExtension.NAMESPACE,
+            new DefaultPacketExtensionProvider<SourcePacketExtension>(
+                    SourcePacketExtension.class));
 
         // create XMPP connection
         ConnectionConfiguration conf =
@@ -80,6 +87,12 @@ public class JitMeetConnector
                         System.out.println("<-----: [presence] "
                             + packet.toXML());
                     }
+                    else if (packet.getClass() == JingleIQ.class)
+                    {
+                        JingleIQ j = (JingleIQ) packet;
+                        System.out.println("<-----: [jingle] " + j.getSID()
+                            + " : " + j.getAction() + " : " + packet.toXML());
+                    }
                     else
                     {
                         System.out.println("<-----: " + packet.toXML());
@@ -98,7 +111,7 @@ public class JitMeetConnector
             // join conference
             MultiUserChat muc =
                 new MultiUserChat(connection,
-                    "ysr7egtybc7bvs4i@conference.example.com");
+                    "idbxzxwyybsxlxr@conference.example.com");
             muc.join("JitMeetConnector");
 
             Scanner s = new Scanner(System.in);
