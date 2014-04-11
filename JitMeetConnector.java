@@ -2,6 +2,8 @@ package test;
 
 import java.io.IOException;
 import java.net.BindException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -29,6 +31,7 @@ import org.ice4j.ice.Agent;
 import org.ice4j.ice.Candidate;
 import org.ice4j.ice.Component;
 import org.ice4j.ice.IceMediaStream;
+import org.ice4j.ice.RemoteCandidate;
 import org.jitsi.service.libjitsi.LibJitsi;
 import org.jitsi.service.neomedia.MediaService;
 import org.jitsi.service.neomedia.MediaType;
@@ -43,7 +46,6 @@ import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Packet;
-import org.jivesoftware.smack.packet.Presence;
 import org.jivesoftware.smack.provider.ProviderManager;
 import org.jivesoftware.smackx.muc.MultiUserChat;
 
@@ -55,6 +57,9 @@ public class JitMeetConnector
 
     private Agent iceAgent;
 
+    // Muc conference id, it should be set manually
+    private String conferenceId = "b1xq9zd9p69lik9";
+
     public static void main(String[] args)
     {
         JitMeetConnector connector;
@@ -63,39 +68,83 @@ public class JitMeetConnector
         connector.run();
     }
 
+    public void run()
+    {
+        try
+        {
+            initiate();
+
+            // Login anonymously, get temporary account
+            connection.connect();
+            connection.loginAnonymously();
+
+            // Display connection information
+            System.out.println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+            System.out.println("ConnectionID: " + connection.getConnectionID());
+            System.out.println("Host: " + connection.getHost());
+            System.out.println("Port: " + connection.getPort());
+            System.out.println("ServiceName: " + connection.getServiceName());
+            System.out.println("User: " + connection.getUser());
+            System.out.println("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
+
+            // Join muc conference
+            MultiUserChat muc =
+                new MultiUserChat(connection, conferenceId
+                    + "@conference.example.com");
+            muc.join("JitMeetConnector");
+
+            Scanner s = new Scanner(System.in);
+            while (true)
+            {
+                String str = s.nextLine();
+                if (str.equalsIgnoreCase("bye"))
+                    break;
+                muc.sendMessage(str);
+            }
+        }
+        catch (XMPPException e)
+        {
+            e.printStackTrace();
+        }
+        finally
+        {
+            uninitiate();
+        }
+    }
+
     public void initiate()
     {
-        // start libjitsi
-        LibJitsi.start();
-
-        // initiate Agent
-        initiateAgent();
-
-        // initiate devices
-        initiateDevices();
-
-        // initiate packet extension
-        initiatePacketExtension();
-
-        // initiate packet listener
-        initiatePacketListener();
-
-        // create XMPP connection
+        // Create XMPP connection
         ConnectionConfiguration conf =
             new ConnectionConfiguration("jitmeet.example.com", 5222);
         XMPPConnection.DEBUG_ENABLED = true;
         connection = new XMPPConnection(conf);
+
+        // Start libjitsi service
+        LibJitsi.start();
+
+        // Initiate iceAgent
+        initiateAgent();
+
+        // Initiate devices
+        initiateDevices();
+
+        // Initiate packet extension
+        initiatePacketExtension();
+
+        // Initiate packet listener
+        initiatePacketListener();
     }
 
     private void uninitiate()
     {
+        iceAgent.free();
         connection.disconnect();
         LibJitsi.stop();
     }
 
     private void initiateAgent()
     {
-        // agent
         iceAgent = new Agent();
         int MIN_STREAM_PORT = 5000;
         int MAX_STREAM_PORT = 9000;
@@ -118,17 +167,14 @@ public class JitMeetConnector
         }
         catch (BindException e)
         {
-            // TODO Auto-generated catch block
             e.printStackTrace();
         }
         catch (IllegalArgumentException e)
         {
-            // TODO Auto-generated catch block
             e.printStackTrace();
         }
         catch (IOException e)
         {
-            // TODO Auto-generated catch block
             e.printStackTrace();
         }
 
@@ -146,22 +192,20 @@ public class JitMeetConnector
         }
         catch (BindException e)
         {
-            // TODO Auto-generated catch block
             e.printStackTrace();
         }
         catch (IllegalArgumentException e)
         {
-            // TODO Auto-generated catch block
             e.printStackTrace();
         }
         catch (IOException e)
         {
-            // TODO Auto-generated catch block
             e.printStackTrace();
         }
 
     }
 
+    // Audio & video devices
     private void initiateDevices()
     {
         devices = new HashMap<String, MediaDevice>();
@@ -170,33 +214,35 @@ public class JitMeetConnector
             service.getDefaultDevice(MediaType.AUDIO, MediaUseCase.CALL));
         devices.put(MediaType.VIDEO.toString(),
             service.getDefaultDevice(MediaType.VIDEO, MediaUseCase.CALL));
+
     }
 
+    // JingleIQ extension, media extension(it doesn't belong to jitsi)
     private void initiatePacketExtension()
     {
-        // create IQ handler
+        // Create IQ handler
         ProviderManager providerManager = ProviderManager.getInstance();
 
         providerManager.addIQProvider(JingleIQ.ELEMENT_NAME,
             JingleIQ.NAMESPACE, new JingleIQProvider());
+        // I didn't find similar packet extension/provider to parse media
+        // information(http://estos.de/ns/mjs), so I just wrote one
         providerManager.addExtensionProvider("media", "http://estos.de/ns/mjs",
             new MediaExtensionProvider());
     }
 
     private void initiatePacketListener()
     {
-        // display all sent packets
         connection.addPacketSendingListener(new PacketListener()
         {
-
             @Override
             public void processPacket(Packet packet)
             {
+                // Display all send packets
                 System.out.println("--->: " + packet.toXML());
             }
         }, new PacketFilter()
         {
-
             @Override
             public boolean accept(Packet packet)
             {
@@ -204,36 +250,30 @@ public class JitMeetConnector
             }
         });
 
-        // display all incoming packets
         connection.addPacketListener(new PacketListener()
         {
             @Override
             public void processPacket(Packet packet)
             {
+                // Display all receive packets
+                System.out.println("<---: " + packet.toXML());
 
-                if (packet instanceof Presence)
+                if (JingleIQ.class == packet.getClass())
                 {
-                    System.out.println("<---: " + packet.toXML());
-                }
-                else if (packet.getClass() == JingleIQ.class)
-                {
-                    JingleIQ in = (JingleIQ) packet;
+                    JingleIQ jiq = (JingleIQ) packet;
                     System.out.println("<---: " + packet.toXML());
 
-                    if (IQ.Type.SET == in.getType())
+                    // Send a result IQ whenever meet a set IQ
+                    if (IQ.Type.SET == jiq.getType())
+                        connection.sendPacket(IQ.createResultIQ(jiq));
+
+                    // SESSION_INITIATE
+                    if (JingleAction.SESSION_INITIATE == jiq.getAction())
                     {
-                        // send a result IQ whenever meet a set IQ
-                        connection.sendPacket(IQ.createResultIQ(in));
+                        addRemoteCandidates(jiq);
+                        acceptJingleSessionInitiate(jiq);
+                        iceAgent.startConnectivityEstablishment();
                     }
-
-                    if (JingleAction.SESSION_INITIATE == in.getAction())
-                    {
-                        acceptJingleSessionInitiate(in);
-                    }
-                }
-                else
-                {
-                    System.out.println("<---: " + packet.toXML());
                 }
             }
         }, new PacketFilter()
@@ -247,73 +287,113 @@ public class JitMeetConnector
         });
     }
 
-    public void run()
+    // Add remote candidates to ice agent
+    private void addRemoteCandidates(JingleIQ jiq)
     {
-        try
+        // Audio content & Video content
+        for (ContentPacketExtension content : jiq.getContentList())
         {
-            initiate();
-
-            // login anonymously, get temporary account
-            connection.connect();
-            connection.loginAnonymously();
-
-            // display connection information
-            System.out.println("ConnectionID: " + connection.getConnectionID());
-            System.out.println("Host: " + connection.getHost());
-            System.out.println("Port: " + connection.getPort());
-            System.out.println("ServiceName: " + connection.getServiceName());
-            System.out.println("User: " + connection.getUser());
-
-            // join conference
-            MultiUserChat muc =
-                new MultiUserChat(connection,
-                    "e9b5w7crd09evcxr@conference.example.com");
-            muc.join("JitMeetConnector");
-
-            Scanner s = new Scanner(System.in);
-            while (true)
+            IceMediaStream stream = iceAgent.getStream(content.getName());
+            if (null != stream)
             {
-                String str = s.nextLine();
-                if (str.equalsIgnoreCase("bye"))
-                    break;
-                muc.sendMessage(str);
+                // ICE-UDP transport
+                for (IceUdpTransportPacketExtension transport : content
+                    .getChildExtensionsOfType(IceUdpTransportPacketExtension.class))
+                {
+                    if (null != transport.getPassword())
+                        stream.setRemotePassword(transport.getPassword());
+                    if (null != transport.getUfrag())
+                        stream.setRemoteUfrag(transport.getUfrag());
+
+                    // Harvest remote candidates of this JingleIQ
+                    List<CandidatePacketExtension> candidates =
+                        transport
+                            .getChildExtensionsOfType(CandidatePacketExtension.class);
+                    if (null == candidates || 0 == candidates.size())
+                        continue;
+                    // Collections.sort(candidates); // It seems useless
+
+                    // Add remote candidates
+                    for (CandidatePacketExtension candidate : candidates)
+                    {
+                        if (candidate.getGeneration() != iceAgent
+                            .getGeneration())
+                            continue;
+                        InetAddress inetAddr = null;
+                        try
+                        {
+                            inetAddr = InetAddress.getByName(candidate.getIP());
+                        }
+                        catch (UnknownHostException e)
+                        {
+                            e.printStackTrace();
+                        }
+
+                        // Type of candidate is hot, so there is no relayed
+                        // address?
+                        TransportAddress relAddr = null;
+                        if (null != candidate.getRelAddr()
+                            && -1 != candidate.getRelPort())
+                            relAddr =
+                                new TransportAddress(candidate.getRelAddr(),
+                                    candidate.getRelPort(),
+                                    Transport.parse(candidate.getProtocol()
+                                        .toLowerCase()));
+
+                        // Either RTP or RTCP component
+                        Component component =
+                            stream.getComponent(candidate.getComponent());
+                        if (null != component)
+                        {
+                            // Related candidate, relayed candidate?
+                            RemoteCandidate relatedCandidate =
+                                null != relAddr ? component
+                                    .findRemoteCandidate(relAddr) : null;
+                            TransportAddress transAddr =
+                                new TransportAddress(inetAddr,
+                                    candidate.getPort(),
+                                    Transport.parse(candidate.getProtocol()
+                                        .toLowerCase()));
+                            // Seems like all types are host here
+                            org.ice4j.ice.CandidateType type =
+                                org.ice4j.ice.CandidateType.parse(candidate
+                                    .getType().toString());
+                            RemoteCandidate remoteCandidate =
+                                new RemoteCandidate(transAddr, component, type,
+                                    candidate.getFoundation(),
+                                    candidate.getPriority(), relatedCandidate);
+                            component.addRemoteCandidate(remoteCandidate);
+                        }
+                    }
+                }
             }
-        }
-        catch (XMPPException e)
-        {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
-        finally
-        {
-            uninitiate();
         }
     }
 
+    // Create session-accept IQ and send it to peer
     private void acceptJingleSessionInitiate(JingleIQ initiateIQ)
     {
-        System.out
-            .println("lishunyang@acceptJingleSessionInitiate:JitMeetConnector");
         String peerJid = initiateIQ.getFrom();
         String myJid = initiateIQ.getTo();
         String sessionId = initiateIQ.getSID();
 
-        // construct content list
+        // Construct content list
         List<ContentPacketExtension> acceptContents =
             new ArrayList<ContentPacketExtension>();
         List<ContentPacketExtension> initiateContents =
             initiateIQ.getContentList();
+        // Audio content & Video content
         for (ContentPacketExtension initiateContent : initiateContents)
         {
-            // description
+            // Description
             RtpDescriptionPacketExtension description =
                 generateDescription(initiateContent);
 
-            // transport
+            // Transport
             IceUdpTransportPacketExtension transport =
                 generateTransport(initiateContent);
 
-            // content
+            // Content
             ContentPacketExtension content =
                 generateContent(description, transport);
 
@@ -323,29 +403,30 @@ public class JitMeetConnector
         JingleIQ acceptIQ =
             JinglePacketFactory.createSessionAccept(myJid, peerJid, sessionId,
                 acceptContents);
-        System.out.println("[accept] " + acceptIQ.toXML());
         connection.sendPacket(acceptIQ);
     }
 
     private RtpDescriptionPacketExtension generateDescription(
         ContentPacketExtension content)
     {
-        System.out.println("lishunyang@generateDescription:JitMeetConnector");
         RtpDescriptionPacketExtension description =
             new RtpDescriptionPacketExtension();
 
-        // basic info
+        // Basic info
         description.setMedia(content.getName());
-        // TODO add ssrc
 
-        // payload-type
+        // TODO Add ssrc
+
+        // Payload-type
         List<RtpDescriptionPacketExtension> descriptions =
             content
                 .getChildExtensionsOfType(RtpDescriptionPacketExtension.class);
-        for (RtpDescriptionPacketExtension des : descriptions) // 实际上只有一个description
+        // Only one description actually
+        for (RtpDescriptionPacketExtension des : descriptions)
         {
             MediaDevice device = devices.get(des.getMedia());
-            // 有多个payloadType，取第一个匹配id的，这个不是很明白
+            // Though there may be many payload-type, take the first suitable
+            // one
             List<PayloadTypePacketExtension> payloadTypes =
                 des.getPayloadTypes();
             List<MediaFormat> formats = device.getSupportedFormats();
@@ -373,17 +454,15 @@ public class JitMeetConnector
     private IceUdpTransportPacketExtension generateTransport(
         ContentPacketExtension content)
     {
-        System.out.println("lishunyang@generateTransport:JitMeetConnector");
         IceUdpTransportPacketExtension transport =
             new IceUdpTransportPacketExtension();
 
-        // basic info
+        // Basic info
         transport.setPassword(iceAgent.getLocalPassword());
         transport.setUfrag(iceAgent.getLocalUfrag());
 
-        // candidates
+        // Candidates
         int id = 0;
-        System.out.println(content.getName());
         IceMediaStream stream = iceAgent.getStream(content.getName());
         for (Component component : stream.getComponents())
         {
@@ -395,7 +474,8 @@ public class JitMeetConnector
                 candidate.setFoundation(can.getFoundation());
                 candidate.setGeneration(iceAgent.getGeneration());
                 candidate.setID(String.valueOf(id++));
-                candidate.setNetwork(1); // TODO 这里不太明白，设为1吧
+                candidate.setNetwork(1); // TODO Don't really understand here,
+                                         // just write 1
                 TransportAddress ta = can.getTransportAddress();
                 candidate.setIP(ta.getHostAddress());
                 candidate.setPort(ta.getPort());
@@ -414,31 +494,29 @@ public class JitMeetConnector
         RtpDescriptionPacketExtension description,
         IceUdpTransportPacketExtension transport)
     {
-        System.out.println("lishunyang@generateContent:JitMeetConnector");
         ContentPacketExtension content = new ContentPacketExtension();
 
-        // basic info
+        // Basic info
         content.setCreator(CreatorEnum.responder);
         content.setName(description.getMedia());
         content.setSenders(SendersEnum.both);
 
-        // description
+        // Description
         content.addChildExtension(description);
-        // transport
+        // Transport
         content.addChildExtension(transport);
 
         return content;
     }
 
+    // Make payload packet extension from media format
     private PayloadTypePacketExtension formatToPayload(MediaFormat format)
     {
-        System.out.println("lishunyang@formatToPayload:JitMeetConnector");
         PayloadTypePacketExtension payloadType =
             new PayloadTypePacketExtension();
         payloadType.setId(format.getRTPPayloadType());
         payloadType.setName(format.getEncoding());
 
-        // video 没有channel?
         if (format instanceof AudioMediaFormat)
             payloadType.setChannels(((AudioMediaFormat) format).getChannels());
         payloadType.setClockrate((int) format.getClockRate());
@@ -462,4 +540,5 @@ public class JitMeetConnector
 
         return payloadType;
     }
+
 }
