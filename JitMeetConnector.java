@@ -29,13 +29,20 @@ import org.ice4j.Transport;
 import org.ice4j.TransportAddress;
 import org.ice4j.ice.Agent;
 import org.ice4j.ice.Candidate;
+import org.ice4j.ice.CandidatePair;
 import org.ice4j.ice.Component;
 import org.ice4j.ice.IceMediaStream;
+import org.ice4j.ice.IceProcessingState;
 import org.ice4j.ice.RemoteCandidate;
 import org.jitsi.service.libjitsi.LibJitsi;
+import org.jitsi.service.neomedia.DefaultStreamConnector;
+import org.jitsi.service.neomedia.MediaDirection;
 import org.jitsi.service.neomedia.MediaService;
+import org.jitsi.service.neomedia.MediaStream;
+import org.jitsi.service.neomedia.MediaStreamTarget;
 import org.jitsi.service.neomedia.MediaType;
 import org.jitsi.service.neomedia.MediaUseCase;
+import org.jitsi.service.neomedia.StreamConnector;
 import org.jitsi.service.neomedia.device.MediaDevice;
 import org.jitsi.service.neomedia.format.AudioMediaFormat;
 import org.jitsi.service.neomedia.format.MediaFormat;
@@ -53,12 +60,23 @@ public class JitMeetConnector
 {
     private XMPPConnection connection;
 
-    private Map<String, MediaDevice> devices;
+    private Map<String, MediaDevice> mediaDevices;
+
+    private Map<String, MediaFormat> mediaFormats;
+
+    private Map<String, Byte> mediaPayloadTypeIds;
 
     private Agent iceAgent;
 
     // Muc conference id, it should be set manually
-    private String conferenceId = "b1xq9zd9p69lik9";
+    private String conferenceId = "u9hzw31xdhen4s4i";
+
+    public JitMeetConnector()
+    {
+        mediaDevices = new HashMap<String, MediaDevice>();
+        mediaFormats = new HashMap<String, MediaFormat>();
+        mediaPayloadTypeIds = new HashMap<String, Byte>();
+    }
 
     public static void main(String[] args)
     {
@@ -117,7 +135,8 @@ public class JitMeetConnector
         // Create XMPP connection
         ConnectionConfiguration conf =
             new ConnectionConfiguration("jitmeet.example.com", 5222);
-        XMPPConnection.DEBUG_ENABLED = true;
+        // -Dsmack.debugEnabled=true
+        // XMPPConnection.DEBUG_ENABLED = true;
         connection = new XMPPConnection(conf);
 
         // Start libjitsi service
@@ -208,12 +227,11 @@ public class JitMeetConnector
     // Audio & video devices
     private void initiateDevices()
     {
-        devices = new HashMap<String, MediaDevice>();
         MediaService service = LibJitsi.getMediaService();
-        devices.put(MediaType.AUDIO.toString(),
-            service.getDefaultDevice(MediaType.AUDIO, MediaUseCase.CALL));
-        devices.put(MediaType.VIDEO.toString(),
-            service.getDefaultDevice(MediaType.VIDEO, MediaUseCase.CALL));
+        mediaDevices.put(MediaType.AUDIO.toString(),
+            service.getDefaultDevice(MediaType.AUDIO, MediaUseCase.ANY));
+        mediaDevices.put(MediaType.VIDEO.toString(),
+            service.getDefaultDevice(MediaType.VIDEO, MediaUseCase.ANY));
 
     }
 
@@ -272,7 +290,25 @@ public class JitMeetConnector
                     {
                         addRemoteCandidates(jiq);
                         acceptJingleSessionInitiate(jiq);
+                        // start check
                         iceAgent.startConnectivityEstablishment();
+                        // transfer media stream
+                        while (IceProcessingState.TERMINATED != iceAgent
+                            .getState())
+                        {
+                            System.out
+                                .println("lishunyang@initiatePacketListener:JitMeetConnector "
+                                    + iceAgent.getState());
+                            try
+                            {
+                                Thread.sleep(1000);
+                            }
+                            catch (InterruptedException e)
+                            {
+                                e.printStackTrace();
+                            }
+                        }
+                        startMediaStream();
                     }
                 }
             }
@@ -424,7 +460,7 @@ public class JitMeetConnector
         // Only one description actually
         for (RtpDescriptionPacketExtension des : descriptions)
         {
-            MediaDevice device = devices.get(des.getMedia());
+            MediaDevice device = mediaDevices.get(des.getMedia());
             // Though there may be many payload-type, take the first suitable
             // one
             List<PayloadTypePacketExtension> payloadTypes =
@@ -435,9 +471,14 @@ public class JitMeetConnector
                 MediaFormat format = null;
                 for (MediaFormat mf : formats)
                 {
-                    if (mf.getRTPPayloadType() == payloadType.getID())
+                    if (MediaFormat.RTP_PAYLOAD_TYPE_UNKNOWN == mf
+                        .getRTPPayloadType()
+                        || mf.getRTPPayloadType() == payloadType.getID())
                     {
                         format = mf;
+                        mediaFormats.put(des.getMedia(), format);
+                        mediaPayloadTypeIds.put(des.getMedia(),
+                            (byte) payloadType.getID());
                         break;
                     }
                 }
@@ -541,4 +582,38 @@ public class JitMeetConnector
         return payloadType;
     }
 
+    private void startMediaStream()
+    {
+        System.out.println("lishunyang@startMediaStream:JitMeetConnector");
+
+        IceMediaStream stream = iceAgent.getStream("video");
+        Component rtpComponent =
+            stream.getComponent(org.ice4j.ice.Component.RTP);
+        Component rtcpComponent =
+            stream.getComponent(org.ice4j.ice.Component.RTCP);
+        MediaFormat format = mediaFormats.get("video");
+        Byte payloadTypeId = mediaPayloadTypeIds.get("video");
+
+        CandidatePair rtpPair = rtpComponent.getSelectedPair();
+        CandidatePair rtcpPair = rtcpComponent.getSelectedPair();
+
+        MediaDevice device = mediaDevices.get("video");
+        MediaService service = LibJitsi.getMediaService();
+        final MediaStream mediaStream = service.createMediaStream(device);
+
+        mediaStream.setDirection(MediaDirection.SENDRECV);
+        mediaStream.addDynamicRTPPayloadType(payloadTypeId, format);
+        mediaStream.setFormat(format);
+
+        StreamConnector connector =
+            new DefaultStreamConnector(rtpPair.getLocalCandidate()
+                .getDatagramSocket(), rtcpPair.getLocalCandidate()
+                .getDatagramSocket());
+        mediaStream.setConnector(connector);
+        mediaStream.setTarget(new MediaStreamTarget(rtpPair
+            .getRemoteCandidate().getTransportAddress(), rtcpPair
+            .getRemoteCandidate().getTransportAddress()));
+        mediaStream.setName("video");
+        mediaStream.start();
+    }
 }
