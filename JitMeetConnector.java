@@ -601,7 +601,7 @@ public class JitMeetConnector
         MediaService service = LibJitsi.getMediaService();
         final MediaStream mediaStream = service.createMediaStream(device);
 
-        mediaStream.setDirection(MediaDirection.SENDRECV);
+        mediaStream.setDirection(MediaDirection.RECVONLY);
         mediaStream.addDynamicRTPPayloadType(payloadTypeId, format);
         mediaStream.setFormat(format);
 
