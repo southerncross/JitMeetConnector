@@ -604,6 +604,8 @@ public class JitMeetConnector
         stream.setTarget(new MediaStreamTarget(rtpPair.getRemoteCandidate()
             .getTransportAddress(), rtcpPair.getRemoteCandidate()
             .getTransportAddress()));
+            
+        mediaStreams.put(MediaType.VIDEO.toString(), stream);
     }
 
     // TODO: Now, it only handle the video things
