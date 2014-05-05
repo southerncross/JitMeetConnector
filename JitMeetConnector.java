@@ -516,7 +516,7 @@ public class JitMeetConnector
                 generateTransport(content);
             acceptContent.addChildExtension(transport);
 
-            acceptContents.add(content);
+            acceptContents.add(acceptContent);
         }
 
         JingleIQ acceptIq =
