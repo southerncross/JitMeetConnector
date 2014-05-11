@@ -10,9 +10,12 @@ import java.net.BindException;
 import java.net.DatagramSocket;
 import java.net.Inet6Address;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
+import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,10 +46,12 @@ import javax.media.rtp.SessionAddress;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
 
+import net.java.sip.communicator.impl.protocol.jabber.extensions.DefaultPacketExtensionProvider;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.CandidatePacketExtension;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.ContentPacketExtension;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.ContentPacketExtension.CreatorEnum;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.CandidateType;
+import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.DtlsFingerprintPacketExtension;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.IceUdpTransportPacketExtension;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.JingleAction;
 import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.JingleIQ;
@@ -57,6 +62,7 @@ import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.RtpDescr
 import net.java.sip.communicator.impl.protocol.jabber.jinglesdp.JingleUtils;
 import net.java.sip.communicator.service.protocol.media.DynamicPayloadTypeRegistry;
 import net.java.sip.communicator.service.protocol.media.DynamicRTPExtensionsRegistry;
+import net.java.sip.communicator.service.protocol.media.SrtpControls;
 
 import org.ice4j.Transport;
 import org.ice4j.TransportAddress;
@@ -68,16 +74,23 @@ import org.ice4j.ice.IceMediaStream;
 import org.ice4j.ice.IceProcessingState;
 import org.ice4j.ice.RemoteCandidate;
 import org.jitsi.impl.neomedia.format.MediaFormatFactoryImpl;
+import org.jitsi.impl.neomedia.transform.dtls.DtlsControlImpl;
 import org.jitsi.service.libjitsi.LibJitsi;
 import org.jitsi.service.neomedia.DefaultStreamConnector;
+import org.jitsi.service.neomedia.DtlsControl;
 import org.jitsi.service.neomedia.MediaDirection;
 import org.jitsi.service.neomedia.MediaService;
 import org.jitsi.service.neomedia.MediaStream;
 import org.jitsi.service.neomedia.MediaStreamTarget;
 import org.jitsi.service.neomedia.MediaType;
+import org.jitsi.service.neomedia.MediaUseCase;
 import org.jitsi.service.neomedia.RTPExtension;
+import org.jitsi.service.neomedia.SSRCFactory;
+import org.jitsi.service.neomedia.SrtpControl;
 import org.jitsi.service.neomedia.StreamConnector;
 import org.jitsi.service.neomedia.VideoMediaStream;
+import org.jitsi.service.neomedia.device.MediaDevice;
+import org.jitsi.service.neomedia.event.SrtpListener;
 import org.jitsi.service.neomedia.format.MediaFormat;
 import org.jitsi.util.event.VideoEvent;
 import org.jitsi.util.event.VideoListener;
@@ -88,6 +101,7 @@ import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smack.filter.PacketFilter;
 import org.jivesoftware.smack.packet.IQ;
 import org.jivesoftware.smack.packet.Packet;
+import org.jivesoftware.smack.provider.IQProvider;
 import org.jivesoftware.smack.provider.ProviderManager;
 import org.jivesoftware.smackx.muc.MultiUserChat;
 
@@ -97,7 +111,7 @@ public class JitMeetConnector
 
     private MediaService mediaService;
 
-    // private Map<String, MediaDevice> mediaDevices;
+    private Map<String, MediaDevice> mediaDevices;
 
     private Map<String, MediaFormat> mediaFormats;
 
@@ -107,15 +121,68 @@ public class JitMeetConnector
 
     private Agent iceAgent;
 
+    // FIXME: I can't parse fingerprint section
+    // of session-initiate packet, so I have to
+    // fix hash function to sha-1
+    private final String hashFunction = "sha-1";
+
+    private Map<String, String> mediaRemoteFingerprints;
+
     // Muc conference id, it should be set manually
-    private String conferenceId = "wqlii8abm2easjor";
+    private String conferenceId = "kbnqey689gm0a4i";
+    
+    private final SrtpListener srtpListener
+    = new SrtpListener()
+    {
+        public void securityMessageReceived(
+                String message, String i18nMessage, int severity)
+        {
+            System.out.println("Lishunyang@SrtpListener:securityMessageReceived");
+//            for (SrtpListener listener : getSrtpListeners())
+//            {
+//                listener.securityMessageReceived(
+//                        message, i18nMessage, severity);
+//            }
+        }
+
+        public void securityNegotiationStarted(
+                MediaType mediaType, SrtpControl sender)
+        {
+            System.out.println("Lishunyang@SrtpListener:securityNegotiationStarted");
+//            for (SrtpListener listener : getSrtpListeners())
+//                listener.securityNegotiationStarted(mediaType, sender);
+        }
+
+        public void securityTimeout(MediaType mediaType)
+        {
+            System.out.println("Lishunyang@SrtpListener:securityTimeout");
+//            for (SrtpListener listener : getSrtpListeners())
+//                listener.securityTimeout(mediaType);
+        }
+
+        public void securityTurnedOff(MediaType mediaType)
+        {
+            System.out.println("Lishunyang@SrtpListener:securityTurnedOff");
+//            for (SrtpListener listener : getSrtpListeners())
+//                listener.securityTurnedOff(mediaType);
+        }
+
+        public void securityTurnedOn(
+                MediaType mediaType, String cipher, SrtpControl sender)
+        {
+            System.out.println("Lishunyang@SrtpListener:securityTurnedOn");
+//            for (SrtpListener listener : getSrtpListeners())
+//                listener.securityTurnedOn(mediaType, cipher, sender);
+        }
+    };
 
     public JitMeetConnector()
     {
-        // mediaDevices = new HashMap<String, MediaDevice>();
+        mediaDevices = new HashMap<String, MediaDevice>();
         mediaFormats = new HashMap<String, MediaFormat>();
         mediaStreams = new HashMap<String, MediaStream>();
         mediaDynamicPayloadTypeIds = new HashMap<String, Byte>();
+        mediaRemoteFingerprints = new HashMap<String, String>();
     }
 
     public static void main(String[] args)
@@ -172,26 +239,21 @@ public class JitMeetConnector
 
     public void initiate()
     {
-        // Create XMPP connection
         ConnectionConfiguration conf =
             new ConnectionConfiguration("jitmeet.example.com", 5222);
         // -Dsmack.debugEnabled=true
         // XMPPConnection.DEBUG_ENABLED = true;
         connection = new XMPPConnection(conf);
 
-        // Start libjitsi service
         LibJitsi.start();
-
-        // Initiate mediaService
         mediaService = LibJitsi.getMediaService();
 
-        // Initiate iceAgent
-        initiateAgent();
+        initiateDevices();
 
-        // Initiate packet extension
-        initiatePacketExtension();
+        harvestLocalCandidates();
 
-        // Initiate packet listener
+        initiateProviders();
+
         initiatePacketListener();
     }
 
@@ -202,11 +264,28 @@ public class JitMeetConnector
         LibJitsi.stop();
     }
 
-    // TODO: Is there any code of Jitsi that I can reuse to simplify this
-    // method?
-    private void initiateAgent()
+    private void initiateDevices()
     {
-        iceAgent = new Agent();
+        if (null == mediaDevices)
+        {
+            mediaDevices = new HashMap<String, MediaDevice>();
+        }
+
+        for (MediaType media : MediaType.values())
+        {
+            MediaDevice device =
+                mediaService.getDefaultDevice(media, MediaUseCase.ANY);
+            mediaDevices.put(media.toString(), device);
+        }
+    }
+
+    // Refer to NetworkAddressManagerServiceImpl
+    private void harvestLocalCandidates()
+    {
+        if (null == iceAgent)
+        {
+            iceAgent = new Agent();
+        }
         int MIN_STREAM_PORT = 7000;
         int MAX_STREAM_PORT = 9000;
         Random rand = new Random();
@@ -214,60 +293,41 @@ public class JitMeetConnector
             rand.nextInt() % (MAX_STREAM_PORT - MIN_STREAM_PORT)
                 + MIN_STREAM_PORT;
 
-        streamPort = (streamPort & 1) == 1 ? streamPort + 1 : streamPort;
-        streamPort =
-            (streamPort + 1) > MAX_STREAM_PORT ? MIN_STREAM_PORT : streamPort;
-        try
+        for (MediaType media : MediaType.values())
         {
-            int rtpPort = streamPort;
-            IceMediaStream stream = iceAgent.createMediaStream("audio");
-            iceAgent.createComponent(stream, Transport.UDP, rtpPort, rtpPort,
-                rtpPort + 100);
-            iceAgent.createComponent(stream, Transport.UDP, rtpPort + 1,
-                rtpPort + 1, rtpPort + 101);
-        }
-        catch (BindException e)
-        {
-            e.printStackTrace();
-        }
-        catch (IllegalArgumentException e)
-        {
-            e.printStackTrace();
-        }
-        catch (IOException e)
-        {
-            e.printStackTrace();
-        }
-
-        streamPort += 2;
-        streamPort =
-            (streamPort + 1) > MAX_STREAM_PORT ? MIN_STREAM_PORT : streamPort;
-
-        try
-        {
-            int rtpPort = streamPort;
-            IceMediaStream stream = iceAgent.createMediaStream("video");
-            iceAgent.createComponent(stream, Transport.UDP, rtpPort, rtpPort,
-                rtpPort + 100);
-            iceAgent.createComponent(stream, Transport.UDP, rtpPort + 1,
-                rtpPort + 1, rtpPort + 101);
-        }
-        catch (BindException e)
-        {
-            e.printStackTrace();
-        }
-        catch (IllegalArgumentException e)
-        {
-            e.printStackTrace();
-        }
-        catch (IOException e)
-        {
-            e.printStackTrace();
+            streamPort = (streamPort & 1) == 1 ? streamPort + 1 : streamPort;
+            streamPort =
+                (streamPort + 1) > MAX_STREAM_PORT ? MIN_STREAM_PORT
+                    : streamPort;
+            try
+            {
+                int rtpPort = streamPort;
+                int rtcpPort = rtpPort + 1;
+                IceMediaStream stream =
+                    iceAgent.createMediaStream(media.toString());
+                iceAgent.createComponent(stream, Transport.UDP, rtpPort,
+                    rtpPort, rtpPort + 100);
+                iceAgent.createComponent(stream, Transport.UDP, rtcpPort,
+                    rtcpPort, rtcpPort + 100);
+                streamPort += 2;
+            }
+            catch (BindException e)
+            {
+                e.printStackTrace();
+            }
+            catch (IllegalArgumentException e)
+            {
+                e.printStackTrace();
+            }
+            catch (IOException e)
+            {
+                e.printStackTrace();
+            }
         }
     }
 
     // JingleIQ extension, media extension(wrote by myself..)
-    private void initiatePacketExtension()
+    private void initiateProviders()
     {
         // Create IQ handler
         ProviderManager providerManager = ProviderManager.getInstance();
@@ -316,10 +376,17 @@ public class JitMeetConnector
                     // SESSION_INITIATE
                     if (JingleAction.SESSION_INITIATE == jiq.getAction())
                     {
-                        iceConnectivityEstablish(jiq);
+                        // parseFormatsAndPayloadTypes(jiq);
+                        // acceptJingleSessionInitiate(jiq);
+                        // iceConnectivityEstablish(jiq);
+                        // prepareMediaStreams();
+                        // startMediaStreams();
+
                         parseFormatsAndPayloadTypes(jiq);
-                        prepareMediaStreams();
+                        harvestRemoteCandidates(extractTransports(jiq));
                         acceptJingleSessionInitiate(jiq);
+                        checkIceConnectivity();
+                        prepareMediaStreams();
                         startMediaStreams();
                     }
                 }
@@ -340,104 +407,124 @@ public class JitMeetConnector
         });
     }
 
-    // Add remote candidates to ice agent and then start check
-    // Before calling this method, make sure that:
-    // 1. initiateAgent has been done
-    private void iceConnectivityEstablish(JingleIQ jiq)
+    // Note: We assume that a content packet only contains one transport packet
+    // extension
+    private Map<String, IceUdpTransportPacketExtension> extractTransports(
+        JingleIQ jiq)
     {
-        // Audio content & Video content
+        Map<String, IceUdpTransportPacketExtension> transports =
+            new HashMap<String, IceUdpTransportPacketExtension>();
+
         for (ContentPacketExtension content : jiq.getContentList())
         {
-            IceMediaStream stream = iceAgent.getStream(content.getName());
-            if (null != stream)
+            transports.put(content.getName(), content
+                .getFirstChildOfType(IceUdpTransportPacketExtension.class));
+        }
+
+        return transports;
+    }
+
+    // Refer to IceUdpTransportManager
+    private boolean harvestRemoteCandidates(
+        Map<String, IceUdpTransportPacketExtension> transports)
+    {
+        if (null == iceAgent)
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:harvestRemoteCandidates iceAgent is null");
+            return false;
+        }
+
+        int generation = iceAgent.getGeneration();
+
+        for (Map.Entry<String, IceUdpTransportPacketExtension> e : transports
+            .entrySet())
+        {
+            IceUdpTransportPacketExtension transport = e.getValue();
+            List<CandidatePacketExtension> candidates =
+                transport
+                    .getChildExtensionsOfType(CandidatePacketExtension.class);
+
+            // Sort the remote candidates (host < reflexive < relayed) in order
+            // to create first the host, then the reflexive, the relayed
+            // candidates and thus be able to set the relative-candidate
+            // matching the rel-addr/rel-port attribute.
+            Collections.sort(candidates);
+
+            String media = e.getKey();
+            IceMediaStream stream = iceAgent.getStream(media);
+
+            // Different stream may have different ufrag/password
+            String ufrag = transport.getUfrag();
+
+            if (ufrag != null)
+                stream.setRemoteUfrag(ufrag);
+
+            String password = transport.getPassword();
+
+            if (password != null)
+                stream.setRemotePassword(password);
+
+            for (CandidatePacketExtension candidate : candidates)
             {
-                // ICE-UDP transport
-                for (IceUdpTransportPacketExtension transport : content
-                    .getChildExtensionsOfType(IceUdpTransportPacketExtension.class))
+                // FIXME: Don't use IPv6
+                try
                 {
-                    if (null != transport.getPassword())
-                        stream.setRemotePassword(transport.getPassword());
-                    if (null != transport.getUfrag())
-                        stream.setRemoteUfrag(transport.getUfrag());
-
-                    // Harvest remote candidates of this JingleIQ
-                    List<CandidatePacketExtension> candidates =
-                        transport
-                            .getChildExtensionsOfType(CandidatePacketExtension.class);
-                    if (null == candidates || 0 == candidates.size())
+                    if (InetAddress.getByName(candidate.getIP()) instanceof Inet6Address)
                         continue;
-                    // Collections.sort(candidates); // It seems useless
-
-                    // Add remote candidates
-                    for (CandidatePacketExtension candidate : candidates)
-                    {
-                        if (candidate.getGeneration() != iceAgent
-                            .getGeneration())
-                            continue;
-                        InetAddress inetAddr = null;
-                        try
-                        {
-                            inetAddr = InetAddress.getByName(candidate.getIP());
-                        }
-                        catch (UnknownHostException e)
-                        {
-                            e.printStackTrace();
-                        }
-
-                        // Don't use ipv6 address
-                        if (inetAddr instanceof Inet6Address)
-                            continue;
-
-                        // Type of candidate is hot, so there is no relayed
-                        // address?
-                        TransportAddress relAddr = null;
-                        if (null != candidate.getRelAddr()
-                            && -1 != candidate.getRelPort())
-                            relAddr =
-                                new TransportAddress(candidate.getRelAddr(),
-                                    candidate.getRelPort(),
-                                    Transport.parse(candidate.getProtocol()
-                                        .toLowerCase()));
-
-                        // Either RTP or RTCP component
-                        Component component =
-                            stream.getComponent(candidate.getComponent());
-                        if (null != component)
-                        {
-                            // Related candidate, relayed candidate?
-                            RemoteCandidate relatedCandidate =
-                                null != relAddr ? component
-                                    .findRemoteCandidate(relAddr) : null;
-                            TransportAddress transAddr =
-                                new TransportAddress(inetAddr,
-                                    candidate.getPort(),
-                                    Transport.parse(candidate.getProtocol()
-                                        .toLowerCase()));
-                            // Seems like all types are host here
-                            org.ice4j.ice.CandidateType type =
-                                org.ice4j.ice.CandidateType.parse(candidate
-                                    .getType().toString());
-                            RemoteCandidate remoteCandidate =
-                                new RemoteCandidate(transAddr, component, type,
-                                    candidate.getFoundation(),
-                                    candidate.getPriority(), relatedCandidate);
-                            component.addRemoteCandidate(remoteCandidate);
-                        }
-                    }
                 }
+                catch (UnknownHostException e1)
+                {
+                    e1.printStackTrace();
+                }
+
+                /*
+                 * Is the remote candidate from the current generation of the
+                 * iceAgent?
+                 */
+                if (candidate.getGeneration() != generation)
+                    continue;
+
+                Component component =
+                    stream.getComponent(candidate.getComponent());
+                String relAddr;
+                int relPort;
+                TransportAddress relatedAddress = null;
+
+                if (((relAddr = candidate.getRelAddr()) != null)
+                    && ((relPort = candidate.getRelPort()) != -1))
+                {
+                    relatedAddress =
+                        new TransportAddress(relAddr, relPort,
+                            Transport.parse(candidate.getProtocol()));
+                }
+
+                RemoteCandidate relatedCandidate =
+                    component.findRemoteCandidate(relatedAddress);
+                RemoteCandidate remoteCandidate =
+                    new RemoteCandidate(new TransportAddress(candidate.getIP(),
+                        candidate.getPort(), Transport.parse(candidate
+                            .getProtocol())), component,
+                        org.ice4j.ice.CandidateType.parse(candidate.getType()
+                            .toString()), candidate.getFoundation(),
+                        candidate.getPriority(), relatedCandidate);
+
+                component.addRemoteCandidate(remoteCandidate);
             }
         }
 
-        // Wait something ready
-        try
+        return true;
+    }
+
+    private boolean checkIceConnectivity()
+    {
+        if (null == iceAgent)
         {
-            Thread.sleep(1000);
+            System.out
+                .println("Lishunyang@JitMeetConnector:checkIceConnectivity Agent is null");
+            return false;
         }
-        catch (InterruptedException e)
-        {
-            e.printStackTrace();
-        }
-        
+
         // ICE check
         iceAgent.startConnectivityEstablishment();
 
@@ -445,7 +532,7 @@ public class JitMeetConnector
         while (IceProcessingState.TERMINATED != iceAgent.getState())
         {
             System.out
-                .println("lishunyang@initiatePacketListener:JitMeetConnector "
+                .println("lishunyang@JitMeetConnector:checkIceConnectivity Check status "
                     + iceAgent.getState());
             try
             {
@@ -456,20 +543,31 @@ public class JitMeetConnector
                 e.printStackTrace();
             }
         }
-
+        return true;
     }
 
-    // Before calling this method, make sure that:
-    // 1. initiateDevices has been done
     private void parseFormatsAndPayloadTypes(JingleIQ initiateIq)
     {
+        if (null == mediaFormats)
+        {
+            mediaFormats = new HashMap<String, MediaFormat>();
+        }
+        if (null == mediaDynamicPayloadTypeIds)
+        {
+            mediaDynamicPayloadTypeIds = new HashMap<String, Byte>();
+        }
+        if (null == mediaRemoteFingerprints)
+        {
+            mediaRemoteFingerprints = new HashMap<String, String>();
+        }
+
         MediaFormatFactoryImpl fmtFactory = new MediaFormatFactoryImpl();
         List<ContentPacketExtension> initiateContents =
             initiateIq.getContentList();
-        // Audio content & Video content
+
         for (ContentPacketExtension content : initiateContents)
         {
-
+            // Collect fomats and dynamic payload types
             RtpDescriptionPacketExtension description =
                 content
                     .getFirstChildOfType(RtpDescriptionPacketExtension.class);
@@ -482,21 +580,37 @@ public class JitMeetConnector
                     pt.getChannels());
             mediaFormats.put(media, format);
             mediaDynamicPayloadTypeIds.put(media, (byte) pt.getID());
+
+            // Collect fingerprints
+            IceUdpTransportPacketExtension transport =
+                content
+                    .getFirstChildOfType(IceUdpTransportPacketExtension.class);
+            mediaRemoteFingerprints.put(media, transport.getText());
         }
     }
 
     // Create session-accept IQ and send it to peer
-    // Before calling this method, make sure that:
-    // 1. XMPP connection has been built
-    private void acceptJingleSessionInitiate(JingleIQ initiateIq)
+    private boolean acceptJingleSessionInitiate(JingleIQ initiateIq)
     {
-        System.out.println("Lishunyang@JitMeetConnector:acceptJingleSessionInitiate");
+        if (0 == mediaFormats.size())
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:acceptJingleSessionInitiate mediaFormats is empty");
+            return false;
+        }
+        if (0 == mediaDynamicPayloadTypeIds.size())
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:acceptJingleSessionInitiate mediaDynamicPayloadTypeIds is empty");
+            return false;
+        }
+        System.out
+            .println("Lishunyang@JitMeetConnector:acceptJingleSessionInitiate");
+
         String peerJid = initiateIq.getFrom();
         String myJid = initiateIq.getTo();
         String sessionId = initiateIq.getSID();
 
-        // Construct content list which includes an audio content and a video
-        // content
         List<ContentPacketExtension> acceptContents =
             new ArrayList<ContentPacketExtension>();
         List<ContentPacketExtension> initiateContents =
@@ -521,8 +635,7 @@ public class JitMeetConnector
                 JingleUtils.createDescription(CreatorEnum.responder,
                     contentName,
                     JingleUtils.getSenders(MediaDirection.RECVONLY, false),
-                    formats, rtpExtensions, ptRegister,
-                    rtpExtRegister);
+                    formats, rtpExtensions, ptRegister, rtpExtRegister);
 
             // Construct new transport part
             IceUdpTransportPacketExtension transport =
@@ -536,13 +649,19 @@ public class JitMeetConnector
             JinglePacketFactory.createSessionAccept(myJid, peerJid, sessionId,
                 acceptContents);
         connection.sendPacket(acceptIq);
+        return true;
     }
 
-    // TODO: Is there any code of Jitsi that I can reuse to simplify this
-    // method?
     private IceUdpTransportPacketExtension generateTransport(
         ContentPacketExtension content)
     {
+        if (null == iceAgent)
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:generateTransport iceAgent is null");
+            return null;
+        }
+
         IceUdpTransportPacketExtension transport =
             new IceUdpTransportPacketExtension();
 
@@ -563,8 +682,7 @@ public class JitMeetConnector
                 candidate.setFoundation(can.getFoundation());
                 candidate.setGeneration(iceAgent.getGeneration());
                 candidate.setID(String.valueOf(id++));
-                candidate.setNetwork(1); // TODO Don't really understand here,
-                                         // just write 1
+                candidate.setNetwork(1);
                 TransportAddress ta = can.getTransportAddress();
                 candidate.setIP(ta.getHostAddress());
                 candidate.setPort(ta.getPort());
@@ -576,122 +694,201 @@ public class JitMeetConnector
             }
         }
 
+        // DtlsFingerprintPacketExtension
+        // Do nothing here
+
         return transport;
     }
 
     // Get the media streams ready to start
     // Before calling this method, make sure that:
-    // 1. initiateMediaStreams has been done
-    // 2. getPayloadTypes has been done
-    private void prepareMediaStreams()
+    // 1. parseFormatsAndPayloadTypes has been done
+    private boolean prepareMediaStreams()
     {
-        System.out.println("Lishunyang@JitMeetConnector: prepareMediaSreams");
-        // TODO: Now I only handle the video things
-        // TODO: I think that there should be some existed method of Jitsi to
-        // reuse to simplify this part
-        IceMediaStream iceStream =
-            iceAgent.getStream(MediaType.VIDEO.toString());
-        Component rtpComponent =
-            iceStream.getComponent(org.ice4j.ice.Component.RTP);
-        Component rtcpComponent =
-            iceStream.getComponent(org.ice4j.ice.Component.RTCP);
-        CandidatePair rtpPair = rtpComponent.getSelectedPair();
-        CandidatePair rtcpPair = rtcpComponent.getSelectedPair();
-        StreamConnector connector =
-            new DefaultStreamConnector(rtpPair.getLocalCandidate()
-                .getDatagramSocket(), rtcpPair.getLocalCandidate()
-                .getDatagramSocket());
+        if (null == iceAgent)
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:prepareMediaStreams Agent is null");
+            return false;
+        }
+        if (null == mediaService)
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:prepareMediaStreams Service is null");
+            return false;
+        }
+        if (0 == mediaDynamicPayloadTypeIds.size())
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:prepareMediaStreams mediaDynamicPayloadTypeIds is empty");
+            return false;
+        }
+        if (0 == mediaFormats.size())
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:prepareMediaStreams mediaFormats is empty");
+            return false;
+        }
+        if (0 == mediaRemoteFingerprints.size())
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:prepareMediaStreams mediaRemoteFingerprints is empty");
+            return false;
+        }
+        if (0 == mediaDevices.size())
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:prepareMediaStreams mediaDevices is empty");
+            return false;
+        }
+        System.out.println("Lishunyang@JitMeetConnector:prepareMediaSreams");
 
-        MediaStream stream =
-            mediaService.createMediaStream(connector, MediaType.VIDEO);
-        stream.setName(MediaType.VIDEO.toString());
-        stream.setDirection(MediaDirection.RECVONLY);
-        MediaFormat format = mediaFormats.get(MediaType.VIDEO.toString());
-        byte payloadTypeId =
-            mediaDynamicPayloadTypeIds.get(MediaType.VIDEO.toString());
-        // TODO: check the result
-        stream.addDynamicRTPPayloadType(payloadTypeId, format);
-        stream.setFormat(format);
+        for (MediaType media : MediaType.values())
+        {
+            IceMediaStream iceStream = iceAgent.getStream(media.toString());
+            Component rtpComponent =
+                iceStream.getComponent(org.ice4j.ice.Component.RTP);
+            Component rtcpComponent =
+                iceStream.getComponent(org.ice4j.ice.Component.RTCP);
+            CandidatePair rtpPair = rtpComponent.getSelectedPair();
+            CandidatePair rtcpPair = rtcpComponent.getSelectedPair();
+            StreamConnector connector =
+                new DefaultStreamConnector(rtpPair.getLocalCandidate()
+                    .getDatagramSocket(), rtcpPair.getLocalCandidate()
+                    .getDatagramSocket());
+            // DTLS stuff here, am I correct?
+            DtlsControl dtlsControl = new DtlsControlImpl();
+            Map<String, String> fp = new HashMap<String, String>();
+            fp.put(hashFunction, mediaRemoteFingerprints.get(media.toString()));
+            dtlsControl.setRemoteFingerprints(fp);
+            dtlsControl.setSetup(DtlsControl.Setup.ACTIVE);
+            //dtlsControl.start(media);
+            // dtlsControl.setConnector(connector);
 
-        // stream.setConnector(connector);
-        stream.setTarget(new MediaStreamTarget(rtpPair.getRemoteCandidate()
-            .getTransportAddress(), rtcpPair.getRemoteCandidate()
-            .getTransportAddress()));
-        
-        mediaStreams.put(MediaType.VIDEO.toString(), stream);
+            MediaStream stream =
+                mediaService.createMediaStream(connector,
+                    mediaDevices.get(media.toString()), dtlsControl);
+            stream.setName(media.toString());
+            stream.setDirection(MediaDirection.RECVONLY);
+            MediaFormat format = mediaFormats.get(media.toString());
+            stream.addDynamicRTPPayloadType(
+                mediaDynamicPayloadTypeIds.get(media.toString()), format);
+            stream.setFormat(format);
+            // stream.setConnector(connector);
+            stream.setTarget(new MediaStreamTarget(new InetSocketAddress(
+                rtpPair.getRemoteCandidate().getTransportAddress()
+                    .getHostAddress(), rtpPair.getRemoteCandidate()
+                    .getTransportAddress().getPort()),
+                    new InetSocketAddress(
+                        rtcpPair.getRemoteCandidate().getTransportAddress()
+                            .getHostAddress(), rtcpPair.getRemoteCandidate()
+                            .getTransportAddress().getPort())));
+            
+            mediaStreams.put(media.toString(), stream);
+        }
+        return true;
     }
 
-    // TODO: Now, it only handle the video things
     private void startMediaStreams()
     {
-        System.out.println("lishunyang@JitMeetConnector:startMediaStream");
-        String media = "video";
-        final MediaStream stream = mediaStreams.get(media);
+        System.out.println("Lishunyang@JitMeetConnector:startMediaStream");
 
-        stream.start();
+        for (MediaType media : MediaType.values())
+        {
+            MediaStream stream = mediaStreams.get(media.toString());
+            // Start DTLS-SRTP
+            SrtpControl control = stream.getSrtpControl();
+            control.setSrtpListener(srtpListener);
+            control.start(media);
 
-        // MediaStreamStats stats = mediaStream.getMediaStreamStats();
-        System.out
-            .println("Lishunyang@startMediaStream:JitMeetConnector status "
-                + stream.getMediaStreamStats().getLocalIPAddress() + " "
-                + stream.getMediaStreamStats().getLocalPort());
+            stream.start();
 
-        System.out
-            .println("Lishunyang@startMediaStream:JitMeetConnector status "
-                + stream.getMediaStreamStats().getRemoteIPAddress() + " "
-                + stream.getMediaStreamStats().getRemotePort());
-        
-//         final JPanel p = new JPanel(new BorderLayout());
-//         VideoMediaStream vms = (VideoMediaStream) stream;
-//         vms.addVideoListener(new VideoListener()
-//         {
-//        
-//         @Override
-//         public void videoAdded(VideoEvent event)
-//         {
-//         videoUpdate(event);
-//         }
-//        
-//         @Override
-//         public void videoRemoved(VideoEvent event)
-//         {
-//         videoUpdate(event);
-//         }
-//        
-//         @Override
-//         public void videoUpdate(VideoEvent event)
-//         {
-//         p.removeAll();
-//         VideoMediaStream s = (VideoMediaStream) stream;
-//         for (java.awt.Component c : s.getVisualComponents())
-//         {
-//         p.add(c);
-//         break;
-//         }
-//         p.revalidate();
-//         }
-//         });
-//         final JFrame f = new JFrame("test");
-//         f.getContentPane().add(p);
-//         f.pack();
-//         f.setResizable(false);
-//         f.setVisible(true);
-//         f.toFront();
-//         p.addContainerListener(new ContainerListener()
-//         {
-//        
-//         @Override
-//         public void componentAdded(ContainerEvent e)
-//         {
-//         f.pack();
-//         }
-//        
-//         @Override
-//         public void componentRemoved(ContainerEvent e)
-//         {
-//         f.pack();
-//         }
-//         });
+            System.out
+                .println("Lishunyang@JitMeetConnector:startMediaStream local("
+                    + media + ") "
+                    + stream.getMediaStreamStats().getLocalIPAddress() + " "
+                    + stream.getMediaStreamStats().getLocalPort());
+
+            System.out
+                .println("Lishunyang@JitMeetConnector:startMediaStream remote("
+                    + media + ") "
+                    + stream.getMediaStreamStats().getRemoteIPAddress() + " "
+                    + stream.getMediaStreamStats().getRemotePort());
+        }
+
+        final MediaStream videoStream =
+            mediaStreams.get(MediaType.VIDEO.toString());
+        final JPanel p = new JPanel(new BorderLayout());
+        VideoMediaStream vms = (VideoMediaStream) videoStream;
+        vms.addVideoListener(new VideoListener()
+        {
+            @Override
+            public void videoAdded(VideoEvent event)
+            {
+                System.out.println("Lishunyang@VideoListener:videoAdded");
+                videoUpdate(event);
+            }
+
+            @Override
+            public void videoRemoved(VideoEvent event)
+            {
+                System.out.println("Lishunyang@VideoListener:videoRemoved");
+                videoUpdate(event);
+            }
+
+            @Override
+            public void videoUpdate(VideoEvent event)
+            {
+                System.out.println("Lishunyang@VideoListener:videoUpdate");
+                p.removeAll();
+                VideoMediaStream s = (VideoMediaStream) videoStream;
+                for (java.awt.Component c : s.getVisualComponents())
+                {
+                    p.add(c);
+                    break;
+                }
+                p.revalidate();
+            }
+        });
+        final JFrame f = new JFrame("test");
+        f.getContentPane().add(p);
+        f.pack();
+        f.setResizable(false);
+        f.setVisible(true);
+        f.toFront();
+        p.addContainerListener(new ContainerListener()
+        {
+
+            @Override
+            public void componentAdded(ContainerEvent e)
+            {
+                System.out
+                    .println("Lishunyang@ContainerListener:componentAdded");
+                f.pack();
+            }
+
+            @Override
+            public void componentRemoved(ContainerEvent e)
+            {
+                System.out.println("Lishunyang@VideoListener:componentRemoved");
+                f.pack();
+            }
+        });
+
+        while (true)
+        {
+            System.out.println("Lishunyang@JitMeetConnector:startMediaStream "
+                + videoStream.getMediaStreamStats()
+                    .getDownloadRateKiloBitPerSec());
+            try
+            {
+                Thread.sleep(1000);
+            }
+            catch (InterruptedException e1)
+            {
+                e1.printStackTrace();
+            }
+        }
 
     }
 }
