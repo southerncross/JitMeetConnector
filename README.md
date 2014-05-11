@@ -8,7 +8,7 @@ This demo code is for:
 
 Problems:
 ----------
- 1. Sometimes ICE connectivity check will hang up. Dont' know why..
+ 1. Video media stream can not get receive stream although the RTP session has been built successfully
 
 
 **Lishunyang(lishunyang@pku.edu.cn)**
