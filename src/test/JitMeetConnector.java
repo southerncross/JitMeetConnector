@@ -22,6 +22,8 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Scanner;
 
+import javax.media.ControllerEvent;
+import javax.media.ControllerListener;
 import javax.media.DataSink;
 import javax.media.Format;
 import javax.media.Manager;
@@ -41,8 +43,13 @@ import javax.media.protocol.SourceCloneable;
 import javax.media.rtp.InvalidSessionAddressException;
 import javax.media.rtp.RTPConnector;
 import javax.media.rtp.RTPManager;
+import javax.media.rtp.ReceiveStreamListener;
 import javax.media.rtp.SendStream;
 import javax.media.rtp.SessionAddress;
+import javax.media.rtp.SessionListener;
+import javax.media.rtp.event.NewReceiveStreamEvent;
+import javax.media.rtp.event.ReceiveStreamEvent;
+import javax.media.rtp.event.SessionEvent;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
 
@@ -73,6 +80,7 @@ import org.ice4j.ice.Component;
 import org.ice4j.ice.IceMediaStream;
 import org.ice4j.ice.IceProcessingState;
 import org.ice4j.ice.RemoteCandidate;
+import org.jitsi.impl.neomedia.MediaStreamImpl;
 import org.jitsi.impl.neomedia.format.MediaFormatFactoryImpl;
 import org.jitsi.impl.neomedia.transform.dtls.DtlsControlImpl;
 import org.jitsi.service.libjitsi.LibJitsi;
@@ -85,13 +93,16 @@ import org.jitsi.service.neomedia.MediaStreamTarget;
 import org.jitsi.service.neomedia.MediaType;
 import org.jitsi.service.neomedia.MediaUseCase;
 import org.jitsi.service.neomedia.RTPExtension;
+import org.jitsi.service.neomedia.RTPTranslator;
 import org.jitsi.service.neomedia.SSRCFactory;
 import org.jitsi.service.neomedia.SrtpControl;
+import org.jitsi.service.neomedia.SrtpControlType;
 import org.jitsi.service.neomedia.StreamConnector;
 import org.jitsi.service.neomedia.VideoMediaStream;
 import org.jitsi.service.neomedia.device.MediaDevice;
 import org.jitsi.service.neomedia.event.SrtpListener;
 import org.jitsi.service.neomedia.format.MediaFormat;
+import org.jitsi.util.Logger;
 import org.jitsi.util.event.VideoEvent;
 import org.jitsi.util.event.VideoListener;
 import org.jivesoftware.smack.ConnectionConfiguration;
@@ -107,17 +118,22 @@ import org.jivesoftware.smackx.muc.MultiUserChat;
 
 public class JitMeetConnector
 {
+    private Logger logger;
+
     private XMPPConnection connection;
 
     private MediaService mediaService;
 
     private Map<String, MediaDevice> mediaDevices;
 
+    // The selected format for video or audio type
     private Map<String, MediaFormat> mediaFormats;
 
     private Map<String, MediaStream> mediaStreams;
 
     private Map<String, Byte> mediaDynamicPayloadTypeIds;
+
+    private Map<String, Long> mediaRemoteSsrcs;
 
     private Agent iceAgent;
 
@@ -129,50 +145,53 @@ public class JitMeetConnector
     private Map<String, String> mediaRemoteFingerprints;
 
     // Muc conference id, it should be set manually
-    private String conferenceId = "kbnqey689gm0a4i";
-    
-    private final SrtpListener srtpListener
-    = new SrtpListener()
+    private String conferenceId = "4cw6jzwdzx672e29";
+
+    private boolean handleVideo = true;
+
+    private final SrtpListener srtpListener = new SrtpListener()
     {
-        public void securityMessageReceived(
-                String message, String i18nMessage, int severity)
+        public void securityMessageReceived(String message, String i18nMessage,
+            int severity)
         {
-            System.out.println("Lishunyang@SrtpListener:securityMessageReceived");
-//            for (SrtpListener listener : getSrtpListeners())
-//            {
-//                listener.securityMessageReceived(
-//                        message, i18nMessage, severity);
-//            }
+            System.out
+                .println("Lishunyang@SrtpListener:securityMessageReceived");
+            // for (SrtpListener listener : getSrtpListeners())
+            // {
+            // listener.securityMessageReceived(
+            // message, i18nMessage, severity);
+            // }
         }
 
-        public void securityNegotiationStarted(
-                MediaType mediaType, SrtpControl sender)
+        public void securityNegotiationStarted(MediaType mediaType,
+            SrtpControl sender)
         {
-            System.out.println("Lishunyang@SrtpListener:securityNegotiationStarted");
-//            for (SrtpListener listener : getSrtpListeners())
-//                listener.securityNegotiationStarted(mediaType, sender);
+            System.out
+                .println("Lishunyang@SrtpListener:securityNegotiationStarted");
+            // for (SrtpListener listener : getSrtpListeners())
+            // listener.securityNegotiationStarted(mediaType, sender);
         }
 
         public void securityTimeout(MediaType mediaType)
         {
             System.out.println("Lishunyang@SrtpListener:securityTimeout");
-//            for (SrtpListener listener : getSrtpListeners())
-//                listener.securityTimeout(mediaType);
+            // for (SrtpListener listener : getSrtpListeners())
+            // listener.securityTimeout(mediaType);
         }
 
         public void securityTurnedOff(MediaType mediaType)
         {
             System.out.println("Lishunyang@SrtpListener:securityTurnedOff");
-//            for (SrtpListener listener : getSrtpListeners())
-//                listener.securityTurnedOff(mediaType);
+            // for (SrtpListener listener : getSrtpListeners())
+            // listener.securityTurnedOff(mediaType);
         }
 
-        public void securityTurnedOn(
-                MediaType mediaType, String cipher, SrtpControl sender)
+        public void securityTurnedOn(MediaType mediaType, String cipher,
+            SrtpControl sender)
         {
             System.out.println("Lishunyang@SrtpListener:securityTurnedOn");
-//            for (SrtpListener listener : getSrtpListeners())
-//                listener.securityTurnedOn(mediaType, cipher, sender);
+            // for (SrtpListener listener : getSrtpListeners())
+            // listener.securityTurnedOn(mediaType, cipher, sender);
         }
     };
 
@@ -182,6 +201,7 @@ public class JitMeetConnector
         mediaFormats = new HashMap<String, MediaFormat>();
         mediaStreams = new HashMap<String, MediaStream>();
         mediaDynamicPayloadTypeIds = new HashMap<String, Byte>();
+        mediaRemoteSsrcs = new HashMap<String, Long>();
         mediaRemoteFingerprints = new HashMap<String, String>();
     }
 
@@ -239,6 +259,8 @@ public class JitMeetConnector
 
     public void initiate()
     {
+        logger = Logger.getLogger(JitMeetConnector.class);
+
         ConnectionConfiguration conf =
             new ConnectionConfiguration("jitmeet.example.com", 5222);
         // -Dsmack.debugEnabled=true
@@ -290,8 +312,11 @@ public class JitMeetConnector
         int MAX_STREAM_PORT = 9000;
         Random rand = new Random();
         int streamPort =
-            rand.nextInt() % (MAX_STREAM_PORT - MIN_STREAM_PORT)
+            Math.abs(rand.nextInt()) % (MAX_STREAM_PORT - MIN_STREAM_PORT)
                 + MIN_STREAM_PORT;
+        System.out
+            .println("Lishunyang@JitMeetConnector:harvestLocalCandidates streamPort "
+                + streamPort);
 
         for (MediaType media : MediaType.values())
         {
@@ -376,12 +401,6 @@ public class JitMeetConnector
                     // SESSION_INITIATE
                     if (JingleAction.SESSION_INITIATE == jiq.getAction())
                     {
-                        // parseFormatsAndPayloadTypes(jiq);
-                        // acceptJingleSessionInitiate(jiq);
-                        // iceConnectivityEstablish(jiq);
-                        // prepareMediaStreams();
-                        // startMediaStreams();
-
                         parseFormatsAndPayloadTypes(jiq);
                         harvestRemoteCandidates(extractTransports(jiq));
                         acceptJingleSessionInitiate(jiq);
@@ -556,6 +575,10 @@ public class JitMeetConnector
         {
             mediaDynamicPayloadTypeIds = new HashMap<String, Byte>();
         }
+        if (null == mediaRemoteSsrcs)
+        {
+            mediaRemoteSsrcs = new HashMap<String, Long>();
+        }
         if (null == mediaRemoteFingerprints)
         {
             mediaRemoteFingerprints = new HashMap<String, String>();
@@ -572,14 +595,36 @@ public class JitMeetConnector
                 content
                     .getFirstChildOfType(RtpDescriptionPacketExtension.class);
             String media = description.getMedia();
+            // As for Video, the media format is fixed to RED
+            if (media.equalsIgnoreCase("video"))
+            {
+                for (PayloadTypePacketExtension pt : description.getPayloadTypes())
+                {
+                    // Dynamic payloadtype of RED is 116
+                    if (116 == pt.getID())
+                    {
+                        MediaFormat format =
+                            fmtFactory.createMediaFormat(pt.getName(),
+                                pt.getClockrate(), pt.getChannels());
+                        mediaFormats.put(media, format);
+                        mediaDynamicPayloadTypeIds.put(media, (byte) pt.getID());
+                        break;
+                    }
+                }
+            }
             // Only use the first element of formats
-            PayloadTypePacketExtension pt =
-                description.getPayloadTypes().get(0);
-            MediaFormat format =
-                fmtFactory.createMediaFormat(pt.getName(), pt.getClockrate(),
-                    pt.getChannels());
-            mediaFormats.put(media, format);
-            mediaDynamicPayloadTypeIds.put(media, (byte) pt.getID());
+            else
+            {
+                PayloadTypePacketExtension pt =
+                    description.getPayloadTypes().get(0);
+                MediaFormat format =
+                    fmtFactory.createMediaFormat(pt.getName(),
+                        pt.getClockrate(), pt.getChannels());
+                mediaFormats.put(media, format);
+                mediaDynamicPayloadTypeIds.put(media, (byte) pt.getID());
+            }
+
+            mediaRemoteSsrcs.put(media, Long.valueOf(description.getSsrc()));
 
             // Collect fingerprints
             IceUdpTransportPacketExtension transport =
@@ -702,7 +747,6 @@ public class JitMeetConnector
 
     // Get the media streams ready to start
     // Before calling this method, make sure that:
-    // 1. parseFormatsAndPayloadTypes has been done
     private boolean prepareMediaStreams()
     {
         if (null == iceAgent)
@@ -745,6 +789,10 @@ public class JitMeetConnector
 
         for (MediaType media : MediaType.values())
         {
+            // Ignore video stream
+            if (MediaType.VIDEO == media && !handleVideo)
+                continue;
+
             IceMediaStream iceStream = iceAgent.getStream(media.toString());
             Component rtpComponent =
                 iceStream.getComponent(org.ice4j.ice.Component.RTP);
@@ -757,34 +805,39 @@ public class JitMeetConnector
                     .getDatagramSocket(), rtcpPair.getLocalCandidate()
                     .getDatagramSocket());
             // DTLS stuff here, am I correct?
-            DtlsControl dtlsControl = new DtlsControlImpl();
-            Map<String, String> fp = new HashMap<String, String>();
-            fp.put(hashFunction, mediaRemoteFingerprints.get(media.toString()));
-            dtlsControl.setRemoteFingerprints(fp);
-            dtlsControl.setSetup(DtlsControl.Setup.ACTIVE);
-            //dtlsControl.start(media);
+            // DtlsControl dtlsControl = (DtlsControl)
+            // mediaService.createSrtpControl(SrtpControlType.DTLS_SRTP);
+            // Map<String, String> fp = new HashMap<String, String>();
+            // fp.put(hashFunction,
+            // mediaRemoteFingerprints.get(media.toString()));
+            // dtlsControl.setRemoteFingerprints(fp);
+            // dtlsControl.setSetup(DtlsControl.Setup.ACTIVE);
+            // dtlsControl.start(media);
             // dtlsControl.setConnector(connector);
 
             MediaStream stream =
                 mediaService.createMediaStream(connector,
-                    mediaDevices.get(media.toString()), dtlsControl);
+                    mediaDevices.get(media.toString()));
+            // MediaStream stream =
+            // mediaService.createMediaStream(connector,
+            // mediaDevices.get(media.toString()), dtlsControl);
+
+            // Translator, is this correct?
+            RTPTranslator translator = mediaService.createRTPTranslator();
+            stream.setRTPTranslator(translator);
+
             stream.setName(media.toString());
             stream.setDirection(MediaDirection.RECVONLY);
             MediaFormat format = mediaFormats.get(media.toString());
             stream.addDynamicRTPPayloadType(
                 mediaDynamicPayloadTypeIds.get(media.toString()), format);
             stream.setFormat(format);
-            // stream.setConnector(connector);
-            stream.setTarget(new MediaStreamTarget(new InetSocketAddress(
-                rtpPair.getRemoteCandidate().getTransportAddress()
-                    .getHostAddress(), rtpPair.getRemoteCandidate()
-                    .getTransportAddress().getPort()),
-                    new InetSocketAddress(
-                        rtcpPair.getRemoteCandidate().getTransportAddress()
-                            .getHostAddress(), rtcpPair.getRemoteCandidate()
-                            .getTransportAddress().getPort())));
-            
+            stream.setTarget(new MediaStreamTarget(rtpPair.getRemoteCandidate()
+                .getTransportAddress(), rtcpPair.getRemoteCandidate()
+                .getTransportAddress()));
+
             mediaStreams.put(media.toString(), stream);
+
         }
         return true;
     }
@@ -792,14 +845,20 @@ public class JitMeetConnector
     private void startMediaStreams()
     {
         System.out.println("Lishunyang@JitMeetConnector:startMediaStream");
+        if (mediaStreams.size() < 1)
+        {
+            System.out
+                .println("Lishunyang@JitMeetConnector:startMediaStream mediaStreams is empty");
+            return;
+        }
 
         for (MediaType media : MediaType.values())
         {
             MediaStream stream = mediaStreams.get(media.toString());
             // Start DTLS-SRTP
-            SrtpControl control = stream.getSrtpControl();
-            control.setSrtpListener(srtpListener);
-            control.start(media);
+            // SrtpControl control = stream.getSrtpControl();
+            // control.setSrtpListener(srtpListener);
+            // control.start(media);
 
             stream.start();
 
@@ -814,7 +873,19 @@ public class JitMeetConnector
                     + media + ") "
                     + stream.getMediaStreamStats().getRemoteIPAddress() + " "
                     + stream.getMediaStreamStats().getRemotePort());
+            System.out
+                .println("Lishunyang@JitMeetConnector:startMediaStream encoding("
+                    + media + ") " + stream.getMediaStreamStats().getEncoding());
+            System.out
+                .println("Lishunyang@JitMeetConnector:startMediaStream localSsrc("
+                    + media + ") " + stream.getLocalSourceID());
+            System.out
+                .println("Lishunyang@JitMeetConnector:startMediaStream remoteSsrc("
+                    + media + ") " + stream.getRemoteSourceID());
         }
+
+        if (!handleVideo)
+            return;
 
         final MediaStream videoStream =
             mediaStreams.get(MediaType.VIDEO.toString());
@@ -874,21 +945,22 @@ public class JitMeetConnector
                 f.pack();
             }
         });
-
-        while (true)
-        {
-            System.out.println("Lishunyang@JitMeetConnector:startMediaStream "
-                + videoStream.getMediaStreamStats()
-                    .getDownloadRateKiloBitPerSec());
-            try
-            {
-                Thread.sleep(1000);
-            }
-            catch (InterruptedException e1)
-            {
-                e1.printStackTrace();
-            }
-        }
+        //
+        // while (true)
+        // {
+        // System.out.println("Lishunyang@JitMeetConnector:startMediaStream "
+        // + videoStream.getMediaStreamStats()
+        // .getDownloadRateKiloBitPerSec());
+        // try
+        // {
+        // Thread.sleep(1000);
+        // }
+        // catch (InterruptedException e1)
+        // {
+        // e1.printStackTrace();
+        // }
+        // }
 
     }
+
 }
