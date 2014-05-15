@@ -145,7 +145,7 @@ public class JitMeetConnector
     private Map<String, String> mediaRemoteFingerprints;
 
     // Muc conference id, it should be set manually
-    private String conferenceId = "4cw6jzwdzx672e29";
+    private String conferenceId = "pr0ys350esif6r";
 
     private boolean handleVideo = true;
 
@@ -595,26 +595,24 @@ public class JitMeetConnector
                 content
                     .getFirstChildOfType(RtpDescriptionPacketExtension.class);
             String media = description.getMedia();
-            // As for Video, the media format is fixed to RED
-            if (media.equalsIgnoreCase("video"))
-            {
-                for (PayloadTypePacketExtension pt : description.getPayloadTypes())
-                {
-                    // Dynamic payloadtype of RED is 116
-                    if (116 == pt.getID())
-                    {
-                        MediaFormat format =
-                            fmtFactory.createMediaFormat(pt.getName(),
-                                pt.getClockrate(), pt.getChannels());
-                        mediaFormats.put(media, format);
-                        mediaDynamicPayloadTypeIds.put(media, (byte) pt.getID());
-                        break;
-                    }
-                }
-            }
+//            // As for Video, the media format is fixed to RED
+//            if (media.equalsIgnoreCase("video"))
+//            {
+//                for (PayloadTypePacketExtension pt : description.getPayloadTypes())
+//                {
+//                    // Dynamic payloadtype of RED is 116
+//                    if (116 == pt.getID())
+//                    {
+//                        MediaFormat format =
+//                            fmtFactory.createMediaFormat(pt.getName(),
+//                                pt.getClockrate(), pt.getChannels());
+//                        mediaFormats.put(media, format);
+//                        mediaDynamicPayloadTypeIds.put(media, (byte) pt.getID());
+//                        break;
+//                    }
+//                }
+//            }
             // Only use the first element of formats
-            else
-            {
                 PayloadTypePacketExtension pt =
                     description.getPayloadTypes().get(0);
                 MediaFormat format =
@@ -622,8 +620,7 @@ public class JitMeetConnector
                         pt.getClockrate(), pt.getChannels());
                 mediaFormats.put(media, format);
                 mediaDynamicPayloadTypeIds.put(media, (byte) pt.getID());
-            }
-
+                
             mediaRemoteSsrcs.put(media, Long.valueOf(description.getSsrc()));
 
             // Collect fingerprints
@@ -862,6 +859,7 @@ public class JitMeetConnector
 
             stream.start();
 
+            System.out.println("Lishunyang@JitMeetConnector:startMediaStream is mute? " + stream.isMute());
             System.out
                 .println("Lishunyang@JitMeetConnector:startMediaStream local("
                     + media + ") "
